@@ -8,14 +8,20 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "multer": "^2.0.0",
-    "cors": "^2.8.5"
+    "fluent-ffmpeg": "^2.1.3",
+    "multer": "^2.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
   },
-  "keywords": ["esp32", "audio", "iot", "backend"],
+  "keywords": [
+    "esp32",
+    "audio",
+    "iot",
+    "backend"
+  ],
   "author": "Your Name",
   "license": "MIT"
 }

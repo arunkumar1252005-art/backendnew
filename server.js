@@ -3,7 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
-
+const ffmpeg = require('fluent-ffmpeg');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -25,7 +25,8 @@ const storage = multer.diskStorage({
   },
   filename: function (req, file, cb) {
     // Keep original filename
-    cb(null, file.originalname);
+    const baseName = path.parse(file.originalname).name;
+    cb(null, `${baseName}${Date.now()}`);
   }
 });
 
@@ -73,14 +74,37 @@ app.post('/api/upload', upload.single('audioFile'), (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
-    
-    console.log('File uploaded:', req.file.filename);
-    res.json({
-      message: 'File uploaded successfully',
-      filename: req.file.filename,
-      size: req.file.size,
-      uploadTime: new Date().toISOString()
-    });
+    //Compressing the audio file
+    const inputPath = req.file.path;
+    const outputPath = path.join(uploadsDir, `${req.file.filename}.mp3`);
+
+
+    ffmpeg(inputPath)
+      .audioBitrate('32k')
+      .audioChannels(1)
+      .audioFrequency(16000)
+      .format('mp3')
+      .on('end', () => {
+        
+        fs.unlinkSync(inputPath);
+
+        res.json({
+          message: 'File uploaded successfully',
+          originalName: req.file.originalname,
+          compressedFile: `${req.file.filename}.mp3`,
+          uploadTime: new Date().toISOString()
+        });
+      })
+      .on('error', (err) => {
+        console.error("FFmpeg error:", err);
+        res.status(500).json({ error: 'Compression failed' });
+      })
+      .save(outputPath);
+
+
+
+
+
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ error: 'Upload failed' });
@@ -92,7 +116,7 @@ app.delete('/api/tracks/:filename', (req, res) => {
   try {
     const filename = req.params.filename;
     const filepath = path.join(uploadsDir, filename);
-    
+
     if (fs.existsSync(filepath)) {
       fs.unlinkSync(filepath);
       res.json({ message: 'File deleted successfully' });
@@ -110,7 +134,7 @@ app.get('/api/tracks/:filename/info', (req, res) => {
   try {
     const filename = req.params.filename;
     const filepath = path.join(uploadsDir, filename);
-    
+
     if (fs.existsSync(filepath)) {
       const stats = fs.statSync(filepath);
       res.json({
@@ -142,6 +166,8 @@ app.use((error, req, res, next) => {
   }
   res.status(500).json({ error: error.message });
 });
+
+
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);
