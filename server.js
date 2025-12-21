@@ -33,10 +33,12 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   fileFilter: function (req, file, cb) {
-    // Accept audio files only
-    if (file.mimetype.startsWith('audio/')) {
+    // Relaxed filter: Accept audio types OR generic binary streams (common from mobile apps)
+    if (file.mimetype.startsWith('audio/') || file.mimetype === 'application/octet-stream') {
       cb(null, true);
     } else {
+      // Just log it so you know why it failed
+      console.log('Rejected file type:', file.mimetype); 
       cb(new Error('Only audio files are allowed!'), false);
     }
   },
@@ -69,48 +71,67 @@ app.get('/api/tracks', (req, res) => {
 });
 
 // Upload audio file
+// Upload audio file
 app.post('/api/upload', upload.single('audioFile'), (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
-    //Compressing the audio file
+
+    // Compressing the audio file
     const inputPath = req.file.path;
+    // Note: req.file.filename does not have the extension here based on your multer config
     const outputPath = path.join(uploadsDir, `${req.file.filename}.mp3`);
 
-
     ffmpeg(inputPath)
-      .audioBitrate('32k')
+      .audioBitrate('96k')
       .audioChannels(1)
-      .audioFrequency(16000)
+      .audioFrequency(44100)
+     .audioFilters([
+      'highpass=f=200',   // 1. Remove bass (waste of energy)
+      'dynaudnorm=f=150:g=15'
+  ])
       .format('mp3')
       .on('end', () => {
         
-        fs.unlinkSync(inputPath);
+        // --- NEW CODE: Get final size and print logs ---
+        const initialSize = req.file.size;
+        const finalStats = fs.statSync(outputPath);
+        const finalSize = finalStats.size;
+
+        console.log(`--- Compression Results ---`);
+        console.log(`File: ${req.file.originalname}`);
+        console.log(`Initial Size: ${(initialSize / 1024).toFixed(2)} KB`);
+        console.log(`Final Size:   ${(finalSize / 1024).toFixed(2)} KB`);
+        console.log(`Reduction:    ${((1 - finalSize / initialSize) * 100).toFixed(2)}%`);
+        console.log(`---------------------------`);
+        // ---------------------------------------------
+
+        fs.unlinkSync(inputPath); // Delete the uncompressed upload
 
         res.json({
           message: 'File uploaded successfully',
           originalName: req.file.originalname,
           compressedFile: `${req.file.filename}.mp3`,
-          uploadTime: new Date().toISOString()
+          uploadTime: new Date().toISOString(),
+          // Optional: Send sizes back to the client as well
+          initialSizeBytes: initialSize,
+          finalSizeBytes: finalSize
         });
       })
       .on('error', (err) => {
         console.error("FFmpeg error:", err);
+        // Ensure we try to clean up the temp file even on error
+        if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
         res.status(500).json({ error: 'Compression failed' });
       })
       .save(outputPath);
-
-
-
-
 
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ error: 'Upload failed' });
   }
 });
-
 // Delete audio file
 app.delete('/api/tracks/:filename', (req, res) => {
   try {
