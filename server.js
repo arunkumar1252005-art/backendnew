@@ -5,8 +5,15 @@ const fs = require('fs');
 const cors = require('cors');
 const ffmpeg = require('fluent-ffmpeg');
 const app = express();
+require('dotenv').config();
 const PORT = process.env.PORT || 3000;
-
+// Cloudinary
+const cloudinary = require('cloudinary').v2;
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -38,7 +45,7 @@ const upload = multer({
       cb(null, true);
     } else {
       // Just log it so you know why it failed
-      console.log('Rejected file type:', file.mimetype); 
+      console.log('Rejected file type:', file.mimetype);
       cb(new Error('Only audio files are allowed!'), false);
     }
   },
@@ -87,38 +94,38 @@ app.post('/api/upload', upload.single('audioFile'), (req, res) => {
       .audioBitrate('96k')
       .audioChannels(1)
       .audioFrequency(44100)
-     .audioFilters([
-      'highpass=f=200',   // 1. Remove bass (waste of energy)
-      'dynaudnorm=f=150:g=15'
-  ])
+      .audioFilters([
+        'highpass=f=200',   // 1. Remove bass (waste of energy)
+        'dynaudnorm=f=150:g=15'
+      ])
       .format('mp3')
-      .on('end', () => {
-        
-        // --- NEW CODE: Get final size and print logs ---
-        const initialSize = req.file.size;
-        const finalStats = fs.statSync(outputPath);
-        const finalSize = finalStats.size;
+      .on('end', async () => {
+        try {
+          const cloudResult = await cloudinary.uploader.upload(outputPath, {
+            resource_type: "video", // REQUIRED for audio
+            folder: "esp32-audio",
+            public_id: req.file.filename,
+            overwrite: true
+          });
 
-        console.log(`--- Compression Results ---`);
-        console.log(`File: ${req.file.originalname}`);
-        console.log(`Initial Size: ${(initialSize / 1024).toFixed(2)} KB`);
-        console.log(`Final Size:   ${(finalSize / 1024).toFixed(2)} KB`);
-        console.log(`Reduction:    ${((1 - finalSize / initialSize) * 100).toFixed(2)}%`);
-        console.log(`---------------------------`);
-        // ---------------------------------------------
+          fs.unlinkSync(inputPath);
+          fs.unlinkSync(outputPath);
 
-        fs.unlinkSync(inputPath); // Delete the uncompressed upload
+          res.json({
+            message: 'Upload & compression successful',
+            cloudinaryUrl: cloudResult.secure_url,
+            publicId: cloudResult.public_id,
+            format: cloudResult.format,
+            size: cloudResult.bytes
+          });
 
-        res.json({
-          message: 'File uploaded successfully',
-          originalName: req.file.originalname,
-          compressedFile: `${req.file.filename}.mp3`,
-          uploadTime: new Date().toISOString(),
-          // Optional: Send sizes back to the client as well
-          initialSizeBytes: initialSize,
-          finalSizeBytes: finalSize
-        });
+        } catch (err) {
+          console.error("Cloudinary Upload Error:", err);
+          res.status(500).json({ error: "Cloudinary upload failed" });
+        }
       })
+
+
       .on('error', (err) => {
         console.error("FFmpeg error:", err);
         // Ensure we try to clean up the temp file even on error
