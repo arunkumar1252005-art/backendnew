@@ -92,45 +92,42 @@ app.post('/api/text-to-audio', async (req, res) => {
     const rawAudio = path.join(uploadsDir, `tts_${timestamp}.wav`);
     const compressedAudio = path.join(uploadsDir, `tts_${timestamp}.mp3`);
 
-    //  TEXT → AUDIO
+    // 1️⃣ TEXT → WAV
     const tts = new gTTS(text, 'en');
     tts.save(rawAudio, () => {
 
-      //  COMPRESS AUDIO
+      // 2️⃣ WAV → MP3 (compressed)
       ffmpeg(rawAudio)
         .audioBitrate('96k')
         .audioChannels(1)
         .format('mp3')
-        .on('end', () => {
+        .on('end', async () => {
 
-          //  UPLOAD TO CLOUDINARY
+          // 3️⃣ Upload MP3 to Cloudinary
           cloudinary.uploader.upload(
             compressedAudio,
             {
-              resource_type: 'raw',
+              resource_type: 'video',
               folder: 'esp32_audio'
             },
             (error, result) => {
+
+              // ❌ delete ONLY temp wav
+              fs.unlinkSync(rawAudio);
+
               if (error) {
-                console.error('Cloudinary Error:', error);
                 return res.status(500).json({ error: 'Cloudinary upload failed' });
               }
 
-              // CLEANUP AFTER SUCCESS
-              fs.unlinkSync(rawAudio);
-              fs.unlinkSync(compressedAudio);
-
+              // ✅ MP3 stays in uploads folder
               res.json({
-                message: 'Text converted to audio successfully',
-                url: result.secure_url,
+                message: 'Audio saved locally & uploaded to cloud',
+                localFile: `/audio/tts_${timestamp}.mp3`,
+                cloudUrl: result.secure_url,
                 public_id: result.public_id
               });
             }
           );
-        })
-        .on('error', err => {
-          console.error('FFmpeg error:', err);
-          res.status(500).json({ error: 'Audio compression failed' });
         })
         .save(compressedAudio);
     });
@@ -140,6 +137,7 @@ app.post('/api/text-to-audio', async (req, res) => {
     res.status(500).json({ error: 'Text to audio failed' });
   }
 });
+
 
 
 // Delete audio file
