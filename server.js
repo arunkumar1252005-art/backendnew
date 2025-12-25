@@ -5,6 +5,7 @@ const fs = require('fs');
 const cors = require('cors');
 const ffmpeg = require('fluent-ffmpeg');
 const app = express();
+// const gtts= require('gtts');
 require('dotenv').config();
 const PORT = process.env.PORT || 3000;
 // Cloudinary
@@ -77,68 +78,70 @@ app.get('/api/tracks', (req, res) => {
   }
 });
 
-// Upload audio file
-// Upload audio file
-app.post('/api/upload', upload.single('audioFile'), (req, res) => {
+
+//TEXT TO SPEECH ENDPOINT
+
+const gTTS = require('gtts');
+
+app.post('/api/text-to-audio', async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: 'Text is required' });
 
-    // Compressing the audio file
-    const inputPath = req.file.path;
-    // Note: req.file.filename does not have the extension here based on your multer config
-    const outputPath = path.join(uploadsDir, `${req.file.filename}.mp3`);
+    const timestamp = Date.now();
+    const rawAudio = path.join(uploadsDir, `tts_${timestamp}.wav`);
+    const compressedAudio = path.join(uploadsDir, `tts_${timestamp}.mp3`);
 
-    ffmpeg(inputPath)
-      .audioBitrate('96k')
-      .audioChannels(1)
-      .audioFrequency(44100)
-      .audioFilters([
-        'highpass=f=200',   // 1. Remove bass (waste of energy)
-        'dynaudnorm=f=150:g=15'
-      ])
-      .format('mp3')
-      .on('end', async () => {
-        try {
-          const cloudResult = await cloudinary.uploader.upload(outputPath, {
-            resource_type: "video", // REQUIRED for audio
-            folder: "esp32-audio",
-            public_id: req.file.filename,
-            overwrite: true
-          });
+    //  TEXT → AUDIO
+    const tts = new gTTS(text, 'en');
+    tts.save(rawAudio, () => {
 
-          fs.unlinkSync(inputPath);
-          fs.unlinkSync(outputPath);
+      //  COMPRESS AUDIO
+      ffmpeg(rawAudio)
+        .audioBitrate('96k')
+        .audioChannels(1)
+        .format('mp3')
+        .on('end', () => {
 
-          res.json({
-            message: 'Upload & compression successful',
-            cloudinaryUrl: cloudResult.secure_url,
-            publicId: cloudResult.public_id,
-            format: cloudResult.format,
-            size: cloudResult.bytes
-          });
+          //  UPLOAD TO CLOUDINARY
+          cloudinary.uploader.upload(
+            compressedAudio,
+            {
+              resource_type: 'raw',
+              folder: 'esp32_audio'
+            },
+            (error, result) => {
+              if (error) {
+                console.error('Cloudinary Error:', error);
+                return res.status(500).json({ error: 'Cloudinary upload failed' });
+              }
 
-        } catch (err) {
-          console.error("Cloudinary Upload Error:", err);
-          res.status(500).json({ error: "Cloudinary upload failed" });
-        }
-      })
+              // CLEANUP AFTER SUCCESS
+              fs.unlinkSync(rawAudio);
+              fs.unlinkSync(compressedAudio);
 
+              res.json({
+                message: 'Text converted to audio successfully',
+                url: result.secure_url,
+                public_id: result.public_id
+              });
+            }
+          );
+        })
+        .on('error', err => {
+          console.error('FFmpeg error:', err);
+          res.status(500).json({ error: 'Audio compression failed' });
+        })
+        .save(compressedAudio);
+    });
 
-      .on('error', (err) => {
-        console.error("FFmpeg error:", err);
-        // Ensure we try to clean up the temp file even on error
-        if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-        res.status(500).json({ error: 'Compression failed' });
-      })
-      .save(outputPath);
-
-  } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({ error: 'Upload failed' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Text to audio failed' });
   }
 });
+
+
 // Delete audio file
 app.delete('/api/tracks/:filename', (req, res) => {
   try {
